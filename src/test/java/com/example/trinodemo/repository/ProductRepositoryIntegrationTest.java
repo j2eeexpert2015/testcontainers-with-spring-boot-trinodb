@@ -1,54 +1,90 @@
 package com.example.trinodemo.repository;
 
-import com.example.trinodemo.config.TrinoTestContainer;
 import com.example.trinodemo.model.Product;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.TrinoContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@Import(TrinoTestContainer.class)
-@ActiveProfiles("test")
+@Testcontainers
 public class ProductRepositoryIntegrationTest {
-    private static final Logger logger = LoggerFactory.getLogger(ProductRepositoryIntegrationTest.class);
 
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:14-alpine")
+            .withDatabaseName("testdb")
+            .withUsername("postgres")
+            .withPassword("postgres");
+
+    @Container
+    static TrinoContainer trino = new TrinoContainer(DockerImageName.parse("trinodb/trino:352"));
+    //Using smaller image
+    //static TrinoContainer trino = new TrinoContainer(DockerImageName.parse("trinodb/trino:352-alpine"));
+
+    @DynamicPropertySource
+    static void registerProperties(DynamicPropertyRegistry registry) throws UnsupportedOperationException, IOException, InterruptedException {
+        // Set up the PostgreSQL catalog properties for Trino
+        trino.start();
+        
+        // Create the catalog properties file
+        Map<String, String> catalogProperties = new HashMap<>();
+        catalogProperties.put("connector.name", "postgresql");
+        catalogProperties.put("connection-url", postgres.getJdbcUrl());
+        catalogProperties.put("connection-user", postgres.getUsername());
+        catalogProperties.put("connection-password", postgres.getPassword());
+        
+        // Use exec to create the catalog directory and properties file
+        trino.execInContainer("mkdir", "-p", "/etc/trino/catalog");
+        
+        StringBuilder propertiesContent = new StringBuilder();
+        for (Map.Entry<String, String> entry : catalogProperties.entrySet()) {
+            propertiesContent.append(entry.getKey()).append("=").append(entry.getValue()).append("\n");
+        }
+        
+        try {
+            trino.execInContainer(
+                "sh", "-c", 
+                "echo '" + propertiesContent.toString() + "' > /etc/trino/catalog/postgresql.properties"
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create catalog properties", e);
+        }
+        
+        // Register the Trino connection properties
+        registry.add("trino.url", () -> trino.getHost() + ":" + trino.getMappedPort(8080));
+        registry.add("trino.user", () -> "test");
+        registry.add("trino.catalog", () -> "postgresql");
+        registry.add("trino.schema", () -> "public");
+    }
+    
     @Autowired
     private ProductRepository productRepository;
     
-    @Autowired
-    private PostgreSQLContainer<?> postgresContainer;
-
     @BeforeEach
     public void setUp() {
-        // Verify PostgreSQL container is running
-        assertThat(postgresContainer.isRunning()).isTrue();
-        
-        logger.info("Setting up test data");
-        // First create the table if it doesn't exist
+        // Setup test data
         productRepository.createProductTable();
-        
-        // Clear any existing data
-        logger.info("Clearing existing test data");
         productRepository.deleteAllProducts();
         
-        // Add some test products
-        logger.info("Inserting fresh test data");
         productRepository.saveProduct(new Product(1L, "Laptop", 1200.0, "Electronics"));
         productRepository.saveProduct(new Product(2L, "Smartphone", 800.0, "Electronics"));
         productRepository.saveProduct(new Product(3L, "Coffee Maker", 100.0, "Appliances"));
-        logger.info("Test data setup complete");
     }
-
+    
     @Test
     public void shouldFindAllProducts() {
         List<Product> products = productRepository.findAllProducts();
@@ -56,7 +92,7 @@ public class ProductRepositoryIntegrationTest {
         assertThat(products).isNotNull();
         assertThat(products).hasSize(3);
     }
-
+    
     @Test
     public void shouldFindProductsByCategory() {
         List<Product> electronicsProducts = productRepository.findProductsByCategory("Electronics");
