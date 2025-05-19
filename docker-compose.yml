@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: my_postgres_compose
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: testdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_compose:/var/lib/postgresql/data
+
+  trino:
+    image: trinodb/trino:440 # Pinned version
+    container_name: my_trino_compose
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+
+  sqlpad:
+    image: sqlpad/sqlpad:latest
+    container_name: my_sqlpad_compose
+    ports:
+      - "3000:3000"
+    environment:
+      SQLPAD_ADMIN: admin@example.com
+      SQLPAD_ADMIN_PASSWORD: admin
+    volumes:
+      - sqlpad_data_compose:/var/lib/sqlpad
+    depends_on:
+      - trino
+
+volumes:
+  pgdata_compose:
+  sqlpad_data_compose:
