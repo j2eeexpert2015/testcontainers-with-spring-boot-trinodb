@@ -193,8 +193,44 @@ In `ProductRepositoryIT.java`:
 - **Awaitility**: Polls until catalog/table becomes available in Trino.
 
 ---
+### 3.2 How Testcontainers is Used in `ProductRepositoryIT.java`
+* **SSL/TLS Handling**: For the scope of these integration tests, SSL/TLS encryption is **not enabled** for connections to the Testcontainers-managed PostgreSQL or Trino instances. The containers are started with default network configurations, and the JDBC URLs used for connections within the test environment do not specify SSL. This simplifies the test setup by focusing on application logic rather than secure transport, which is acceptable for ephemeral test instances running in a trusted local Docker environment. If testing SSL-specific configurations were a requirement, the Testcontainers setup would need to be explicitly augmented with SSL certificate management and JDBC SSL parameters.
 
-### 3.2 Running the Tests
+* **Role of `static Network network = Network.newNetwork();` in Testcontainers**: 
+
+In the `ProductRepositoryIT.java` integration test class, you will find the following line that declares and initializes a Testcontainers `Network` object:
+
+```java
+static Network network = Network.newNetwork();
+```
+Subsequently, both the PostgreSQLContainer (postgres) and TrinoContainer (trino) are configured to use this same network instance:
+```java
+static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15")
+        .withNetwork(network) // Attaches the PostgreSQL container to the shared 'network'
+        .withNetworkAliases("mypostgres") // Assigns a hostname "mypostgres" usable within this network
+        // ... other PostgreSQL configurations ...
+
+static TrinoContainer trino = new TrinoContainer("trinodb/trino:440")
+        .withNetwork(network) // Attaches the Trino container to the SAME shared 'network'
+        // ... other Trino configurations ...
+```
+
+**Why is this shared Network essential for the Testcontainers setup? :**
+
+When Testcontainers starts services like PostgreSQL and Trino, each service runs inside its own isolated Docker container. For these distinct containers to communicate with each other—which is a core requirement here, as the Trino container must connect to and query the PostgreSQL container—they need to be part of the same virtual Docker network.
+
+**Enabling Inter-Container Communication:**
+The Network.newNetwork() call creates a new, dedicated Docker bridge network specifically for the duration of your test run. By attaching both the PostgreSQL and Trino containers to this same network object, you are effectively placing them on the same local area network (LAN) within the Docker environment. This allows them to see and reach each other.
+
+**Service Discovery via Network Aliases (Hostnames):**
+A critical feature of Docker networking is service discovery. Once containers are on the same network, they can find each other using their service names or, more explicitly in this Testcontainers setup, using network aliases.
+
+The PostgreSQL container is given a network alias: **.withNetworkAliases("mypostgres")**.
+This means that from within any other container on that same network (specifically, from the Trino container), the hostname mypostgres will resolve to the internal IP address of the PostgreSQL container.
+
+---
+
+### 3.3 Running the Tests
 
 From project root:
 
